@@ -1,0 +1,253 @@
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositories { google(); mavenCentral() }
+}
+rootProject.name = "SimpleAppLock"
+include ':app'
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
+}
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+android {
+    namespace 'com.example.applock'
+    compileSdk 34
+    defaultConfig {
+        applicationId "com.example.applock"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+}
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+    <application
+        android:label="Simple App Lock"
+        android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".LockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true" />
+        <service android:name=".AppLockService"
+            android:exported="false"
+            android:label="Simple App Lock"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_config" />
+        </service>
+    </application>
+</manifest>
+<?xml version="1.0" encoding="utf-8"?>
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="100"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/desc" />
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="desc">ലോക്ക് ചെയ്ത ആപ്പുകൾ തുറക്കുമ്പോൾ PIN ചോദിക്കാൻ.</string>
+</resources>
+package com.example.applock
+
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.provider.Settings
+import android.text.InputType
+import android.widget.*
+
+class MainActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val prefs = getSharedPreferences("lock", Context.MODE_PRIVATE)
+        val selected = HashSet(prefs.getStringSet("apps", emptySet())!!)
+
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setPadding(40, 80, 40, 40)
+
+        val pin = EditText(this)
+        pin.hint = "PIN നൽകുക (4-8 അക്കം)"
+        pin.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        root.addView(pin)
+
+        val save = Button(this)
+        save.text = "PIN സേവ് ചെയ്യുക"
+        save.setOnClickListener {
+            val p = pin.text.toString()
+            if (p.length < 4) {
+                Toast.makeText(this, "കുറഞ്ഞത് 4 അക്കം വേണം", Toast.LENGTH_SHORT).show()
+            } else {
+                prefs.edit().putString("pin", p).apply()
+                Toast.makeText(this, "PIN സേവ് ചെയ്തു", Toast.LENGTH_SHORT).show()
+            }
+        }
+        root.addView(save)
+
+        val acc = Button(this)
+        acc.text = "Accessibility സെറ്റിംഗ്സ് തുറക്കുക"
+        acc.setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        root.addView(acc)
+
+        val list = LinearLayout(this)
+        list.orientation = LinearLayout.VERTICAL
+        val q = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = packageManager.queryIntentActivities(q, 0)
+            .filter { it.activityInfo.packageName != packageName }
+            .sortedBy { it.loadLabel(packageManager).toString().lowercase() }
+        for (a in apps) {
+            val pkg = a.activityInfo.packageName
+            val cb = CheckBox(this)
+            cb.text = a.loadLabel(packageManager)
+            cb.isChecked = pkg in selected
+            cb.setOnCheckedChangeListener { _, on ->
+                if (on) selected.add(pkg) else selected.remove(pkg)
+                prefs.edit().putStringSet("apps", HashSet(selected)).apply()
+            }
+            list.addView(cb)
+        }
+        val sv = ScrollView(this)
+        sv.addView(list)
+        root.addView(sv)
+        setContentView(root)
+    }
+}
+package com.example.applock
+
+import android.app.Activity
+import android.content.Intent
+import android.os.Bundle
+import android.text.InputType
+import android.view.Gravity
+import android.widget.*
+
+class LockActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val target = intent.getStringExtra("pkg") ?: ""
+        val prefs = getSharedPreferences("lock", MODE_PRIVATE)
+
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.gravity = Gravity.CENTER
+        root.setPadding(60, 60, 60, 60)
+
+        val t = TextView(this)
+        t.text = "PIN നൽകുക"
+        t.textSize = 22f
+        t.gravity = Gravity.CENTER
+        root.addView(t)
+
+        val et = EditText(this)
+        et.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        et.gravity = Gravity.CENTER
+        root.addView(et)
+
+        val ok = Button(this)
+        ok.text = "അൺലോക്ക്"
+        ok.setOnClickListener {
+            if (et.text.toString() == prefs.getString("pin", "")) {
+                AppLockService.unlocked = target
+                finish()
+            } else {
+                et.setText("")
+                et.error = "തെറ്റായ PIN"
+            }
+        }
+        root.addView(ok)
+        setContentView(root)
+    }
+
+    override fun onBackPressed() {
+        val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(home)
+        finish()
+    }
+}
+package com.example.applock
+
+import android.accessibilityservice.AccessibilityService
+import android.content.Intent
+import android.view.accessibility.AccessibilityEvent
+
+class AppLockService : AccessibilityService() {
+    companion object { @Volatile var unlocked: String? = null }
+
+    private val ignore = listOf("systemui", "inputmethod", "keyboard", "honeyboard")
+
+    override fun onAccessibilityEvent(e: AccessibilityEvent?) {
+        if (e == null || e.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val pkg = e.packageName?.toString() ?: return
+        val cls = e.className?.toString() ?: ""
+        val prefs = getSharedPreferences("lock", MODE_PRIVATE)
+        if (prefs.getString("pin", null) == null) return
+        if (ignore.any { pkg.contains(it) }) return
+
+        if (pkg == packageName) {
+            if (cls != MainActivity::class.java.name) return
+        } else if (pkg !in prefs.getStringSet("apps", emptySet())!!) {
+            unlocked = null
+            return
+        }
+        if (pkg == unlocked) return
+
+        val i = Intent(this, LockActivity::class.java)
+        i.putExtra("pkg", pkg)
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        startActivity(i)
+    }
+
+    override fun onInterrupt() {}
+}
+name: Build APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
